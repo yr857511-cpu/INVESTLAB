@@ -1,0 +1,54 @@
+name: 시장 데이터 미러 갱신
+
+# INVEST LAB 대시보드가 매번 브라우저에서 직접 부르던 미국금리·환율·지수/원자재/VIX·코인
+# 데이터를, 여기(GitHub Actions)에서 5분마다 대신 받아와 data/market-data.json으로
+# 저장하고 GitHub Pages로 함께 배포한다. 대시보드 쪽은 이 파일이 없거나 오래됐거나
+# 형식이 이상해도 자동으로 기존 방식(Cloudflare 백엔드 → CORS 프록시)으로 넘어가도록
+# 되어 있으므로, 이 워크플로가 실패해도 대시보드가 더 나빠지지는 않는다.
+#
+# [주기에 대해] GitHub Actions의 scheduled workflow는 5분보다 더 촘촘한 주기를 아예 지원하지
+# 않는다(공식적으로 보장하는 가장 짧은 간격이 5분) — 그보다 짧게 적어도 GitHub이 그대로
+# 5분 단위로 맞춰버리거나 무시한다. 게다가 이 저장소처럼 사람이 계속 커밋하지 않는 저장소는
+# 스케줄 실행 자체가 부하 상황에서 몇 분 정도 밀릴 수 있어서(GitHub 쪽 사정), 5분으로 걸어도
+# 실제로는 그보다 조금 늦게 도는 경우가 있다 — 이건 이 워크플로만의 문제가 아니라 GitHub
+# 스케줄러 자체의 특성이라 더 줄일 방법이 없다.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-market-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Node.js 설치
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 시장 데이터 받아오기
+        run: node scripts/fetch-market-data.mjs data/market-data.json
+
+      - name: 변경 있으면 커밋 & 푸시
+        run: |
+          git config user.name "market-data-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/market-data.json
+          if git diff --cached --quiet; then
+            echo "변경 없음 — 커밋 생략"
+          else
+            git commit -m "chore: 시장 데이터 미러 갱신 ($(date -u +%Y-%m-%dT%H:%MZ))"
+            git push
+          fi
